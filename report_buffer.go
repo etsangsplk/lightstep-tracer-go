@@ -33,11 +33,15 @@ func (b *reportBuffer) setFlushing(now time.Time) {
 }
 
 func (b *reportBuffer) clear() {
-	b.rawSpans = b.rawSpans[:0]
+	b.clearSpans()
 	b.reportStart = time.Time{}
 	b.reportEnd = time.Time{}
 	b.droppedSpanCount = 0
 	b.logEncoderErrorCount = 0
+}
+
+func (b *reportBuffer) clearSpans() {
+	b.rawSpans = b.rawSpans[:0]
 }
 
 func (b *reportBuffer) addSpan(span RawSpan) {

@@ -291,6 +291,7 @@ func (tracer *tracerImpl) postFlush(flushEventError *eventFlushError) *eventStat
 
 	if flushEventError != nil {
 		// Restore the records that did not get sent correctly
+		tracer.flushing.clearSpans()
 		tracer.buffer.mergeFrom(&tracer.flushing)
 		statusReportEvent.SetSentSpans(0)
 	} else {
