@@ -7,10 +7,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	logger "log"
 	"os"
+	"reflect"
 	"time"
 
 	lightstep "github.com/lightstep/lightstep-tracer-go"
@@ -36,6 +38,29 @@ func subRoutine(ctx context.Context) {
 	defer subSpan.Finish()
 }
 
+func asyncRoutine(ctx context.Context) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "test async goroutine")
+	type datatum struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+	data := datatum{Name: "test", Value: 100}
+	d, _ := json.Marshal(data)
+	span.LogEvent("logged inside async")
+	span.LogKV("jsondata eager", string(d))
+	span.LogFields(log.Object("json.eager.object", d))
+	span.LogFields(log.Lazy(func(fv log.Encoder) {
+		fv.EmitString("json.lazy.string", string(d))
+	}))
+	span.LogFields(log.Lazy(func(fv log.Encoder) {
+		fv.EmitString("json.lazy.fmt.Sprint", fmt.Sprint(d))
+	}))
+	span.LogFields(log.Lazy(func(fv log.Encoder) {
+		fv.EmitString("json.lazy.fmt.Sprintf", fmt.Sprintf("%#v", d))
+	}))
+	defer span.Finish()
+}
+
 type LoggingRecorder struct {
 	r lightstep.SpanRecorder
 }
@@ -51,22 +76,42 @@ func main() {
 		os.Exit(1)
 	}
 
+	lightstep.SetGlobalEventHandler(logTracerEventHandler)
+
 	loggableRecorder := &LoggingRecorder{}
 
 	// Use LightStep as the global OpenTracing Tracer.
 	opentracing.InitGlobalTracer(lightstep.NewTracer(lightstep.Options{
 		AccessToken: *accessToken,
-		Collector:   lightstep.Endpoint{Host: "localhost", Port: 9997, Plaintext: true},
-		UseGRPC:     true,
+		Collector:   lightstep.Endpoint{Host: "collector.lightstep.com", Plaintext: true},
+		UseHttp:     true,
 		Recorder:    loggableRecorder,
 	}))
 
 	// Do something that's traced.
 	subRoutine(context.Background())
 
+	// Async
+	asyncRoutine(context.Background())
+
 	// Force a flush before exit.
 	err := lightstep.FlushLightStepTracer(opentracing.GlobalTracer())
 	if err != nil {
 		panic(err)
+	}
+}
+
+func logTracerEventHandler(event lightstep.Event) {
+	switch event := event.(type) {
+	case lightstep.EventStatusReport:
+		logger.Printf("LightStep status report status %s", event.String())
+	case lightstep.EventConnectionError:
+		logger.Printf("LightStep connection error %s", event.Err())
+	case lightstep.EventStartError:
+		logger.Printf("LightStep start error %s", event.Err())
+	case lightstep.ErrorEvent:
+		logger.Printf("LightStep error %s", event.Err())
+	default:
+		logger.Printf("LightStep unknown event event %s type %s", event.String(), reflect.TypeOf(event))
 	}
 }
